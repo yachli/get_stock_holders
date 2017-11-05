@@ -1,0 +1,270 @@
+# -*- coding: utf-8 -*-
+
+from selenium import webdriver
+import time
+import urllib
+import json
+import MySQLdb
+import pandas as pd
+import re
+import numpy as np
+import datetime
+from sqlalchemy import Date,VARCHAR,Float
+#from sqlalchemy.dialects.mysql import \
+#        BIGINT, BINARY, BIT, BLOB, BOOLEAN, CHAR, DATE, \
+#        DATETIME, DECIMAL, DECIMAL, DOUBLE, ENUM, FLOAT, INTEGER, \
+#        LONGBLOB, LONGTEXT, MEDIUMBLOB, MEDIUMINT, MEDIUMTEXT, NCHAR, \
+#        NUMERIC, NVARCHAR, REAL, SET, SMALLINT, TEXT, TIME, TIMESTAMP, \
+#        TINYBLOB, TINYINT, TINYTEXT, VARBINARY, VARCHAR, YEAR
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine
+from sqlalchemy import Column, Integer, String,ForeignKey
+from sqlalchemy.orm import mapper, sessionmaker
+import urllib2
+import random
+import chardet
+
+# user_agent 池
+user_agent_list=[]
+user_agent_list.append("Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; en-us) AppleWebKit/534.50 (KHTML, like Gecko) Version/5.1 ")
+user_agent_list.append("Mozilla/5.0 (Windows; U; Windows NT 6.1; en-us) AppleWebKit/534.50 (KHTML, like Gecko) Version/5.1 Safari/534.50")
+user_agent_list.append("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.6; rv:2.0.1) Gecko/20100101 Firefox/4.0.1")
+user_agent_list.append("Opera/9.80 (Macintosh; Intel Mac OS X 10.6.8; U; en) Presto/2.8.131 Version/11.11")
+user_agent_list.append("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_0) AppleWebKit/535.11 (KHTML, like Gecko) Chrome/17.0.963.56 ")
+user_agent_list.append("Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/48.0.2564.116 Safari/537.36")
+
+ # 获取当前的时间戳
+def get_timstamp():
+    timestamp =int(int(time.time())/30)
+    return str(timestamp)
+
+# 获取页数
+def get_pages_count():
+    url = '''http://data.eastmoney.com/DataCenter_V3/gdhs/GetList.ashx?reportdate=&market=&changerate==&range==&pagesize=50&page=%d''' % 1
+    url += "&sortRule=-1&sortType=NoticeDate&js=var%20CWlluAkH&param=&rt=50245321"
+    wp = urllib.urlopen(url)
+    data = wp.read().decode("gbk")
+    start_pos = data.index('=')
+    json_data = data[start_pos + 1:]
+    dict = json.loads(json_data)
+    pages =dict['pages']
+    print(pages)
+#    pages=20
+    return pages
+	
+
+def get_url_list(start,end):
+    url_list=[]
+    while(start<=end):
+        url = '''http://data.eastmoney.com/DataCenter_V3/gdhs/GetList.ashx?reportdate=&market=&changerate==&range==&pagesize=50&page=%d''' %start
+        url += "&sortRule=-1&sortType=NoticeDate&js=var%20CWlluAkH&param=&rt=50245321"
+        url_list.append(url)
+        start+=1
+    return url_list
+
+'''
+{"SecurityCode":"300005",
+"SecurityName":"探路者",
+"LatestPrice":"7.46",
+"PriceChangeRate":"0.54",
+"HolderNum":"42600",
+"PreviousHolderNum":"42765",
+"HolderNumChange":"-165",
+"HolderNumChangeRate":"-0.3858",
+"RangeChangeRate":"-0.27",
+"EndDate":"2017-09-15T00:00:00",
+"PreviousEndDate":"2017-08-31T00:00:00",
+"HolderAvgCapitalisation":"155453.373397183",
+"HolderAvgStockQuantity":"20922.39",
+"TotalCapitalisation":"6622313706.72",
+"CapitalStock":"891293904",
+"NoticeDate":"2017-09-26T00:00:00"
+'''
+
+#engine =create_engine('mysql+mysqldb://user:passwd@ip:port/db_name?charset=utf8')
+#windows下不要使用localhost，否则会出现10061错误
+engine = create_engine('mysql+mysqldb://root:root@127.0.0.1:3306/zhouyang?charset=utf8')
+Base =declarative_base()
+class gudonghushu(Base):
+    __tablename__ = "gudonghushu"
+    # 自增的主键
+    id =Column(Integer,primary_key=True)
+    # 股票代码
+    SecurityCode = Column(VARCHAR(255),nullable=True)
+    #截止日期
+    EndDate=Column(Date,nullable=True)
+    # 股票名称
+    SecurityName =Column(VARCHAR(255),nullable=True)
+    # 最新价
+    LatestPrice=Column(Float,nullable=True)
+    # 涨跌幅
+    PriceChangeRate=Column(Float,nullable=True)
+    #本次户数
+    HolderNum =Column(Float,nullable=True)
+    #上次户数
+    PreviousHolderNum =  Column(Float,nullable=True)
+    #户数增减
+    HolderNumChange =Column(Float,nullable=True)
+    # 户数增减比例
+    HolderNumChangeRate = Column(Float,nullable=True)
+    # 区间涨跌幅
+    RangeChangeRate=Column(Float,nullable=True)
+    #截止日期
+    #EndDate=Column(Date,nullable=True)
+    #上次截止日期
+    PreviousEndDate=Column(Date,nullable=True)
+    # 户均持股市值(万)
+    HolderAvgCapitalisation =Column(Float,nullable=True)
+    # 户均持股数量(万)
+    HolderAvgStockQuantity=Column(Float,nullable=True)
+    # 总市值
+    TotalCapitalisation=Column(Float,nullable=True)
+    # 总股本
+    CapitalStock=Column(Float,nullable=True)
+    # 公告日期
+    NoticeDate=Column(Date,nullable=True)
+
+Session =sessionmaker(bind=engine)
+session =Session()
+# 创建表
+Base.metadata.create_all(engine)
+# 获取链接列表
+
+
+#记录并保存数据
+def save_json_data(user_agent_list):
+    pages =get_pages_count()
+    len_user_agent=len(user_agent_list)
+    url_list =get_url_list(1,pages)
+    count=0
+    for url in url_list:
+        request = urllib2.Request(url)
+        request.add_header('Referer','http://data.eastmoney.com/gdhs/')
+        # 随机从user_agent池中取user
+        pos =random.randint(0,len_user_agent-1)
+        request.add_header('User-Agent', user_agent_list[pos])
+        reader = urllib2.urlopen(request)
+        data=reader.read()
+         # 自动判断编码方式并进行解码
+        encoding = chardet.detect(data)['encoding']
+        # 忽略不能解码的字段
+        data = data.decode(encoding,'ignore')
+        start_pos = data.index('=')
+        json_data = data[start_pos + 1:]
+        dict = json.loads(json_data)
+        list_data = dict['data']
+        count+=1
+        for item in list_data:
+            one = gudonghushu()
+            SecurityCode=item["SecurityCode"].encode("utf8")
+            if(SecurityCode==""):
+                SecurityCode=None
+            else:
+                if(SecurityCode[0]=="6"):
+                    SecurityCode = 'SH' + SecurityCode
+                else:
+                    SecurityCode = 'SZ' + SecurityCode
+            SecurityName=item['SecurityName'].encode("utf8")
+            if(SecurityName ==""):
+                SecurityName =None
+            LatestPrice=item['LatestPrice'].encode("utf8")
+            if(LatestPrice==""):
+                LatestPrice=None
+            else:
+                LatestPrice =float(LatestPrice)
+            PriceChangeRate=item['PriceChangeRate'].encode("utf8")
+            if(PriceChangeRate ==""):
+                PriceChangeRate=None
+            else:
+                PriceChangeRate=float(PriceChangeRate)
+            HolderNum=item['HolderNum'].encode("utf8")
+            if(HolderNum ==""):
+                HolderNum=None
+            else:
+                HolderNum=float(HolderNum)
+            PreviousHolderNum=item['PreviousHolderNum'].encode("utf8")
+            if(PreviousHolderNum ==""):
+                PreviousHolderNum=None
+            else:
+                PreviousHolderNum=float(PreviousHolderNum)
+            HolderNumChange=item['HolderNumChange'].encode("utf8")
+            if(HolderNumChange ==""):
+                HolderNumChange=None
+            else:
+                HolderNumChange=float(HolderNumChange)
+            HolderNumChangeRate=item['HolderNumChangeRate'].encode("utf8")
+            if(HolderNumChangeRate ==""):
+                HolderNumChangeRate=None
+            else:
+                HolderNumChangeRate=float(HolderNumChangeRate)
+            RangeChangeRate=item['RangeChangeRate'].encode("utf8")
+            if(RangeChangeRate ==""):
+                RangeChangeRate=None
+            else:
+                RangeChangeRate=float(RangeChangeRate)
+            EndDate =item['EndDate'].encode("utf8")
+            if(EndDate ==""):
+                EndDate = None
+            else:
+                EndDate = EndDate[0:10]
+                EndDate = datetime.datetime.strptime(EndDate,"%Y-%m-%d").date()
+            PreviousEndDate = item["PreviousEndDate"].encode("utf8")
+            if(PreviousEndDate==""):
+                PreviousEndDate=None
+            else:
+                PreviousEndDate = PreviousEndDate[0:10]
+                PreviousEndDate=datetime.datetime.strptime(PreviousEndDate,"%Y-%m-%d").date()
+            HolderAvgCapitalisation=item['HolderAvgCapitalisation'].encode("utf8")
+            if(HolderAvgCapitalisation ==""):
+                HolderAvgCapitalisation=None
+            else:
+                HolderAvgCapitalisation=float(HolderAvgCapitalisation)
+            HolderAvgStockQuantity=item['HolderAvgStockQuantity'].encode("utf8")
+            if(HolderAvgStockQuantity ==""):
+                HolderAvgStockQuantity=None
+            else:
+                HolderAvgStockQuantity=float(HolderAvgStockQuantity)
+            TotalCapitalisation=item['TotalCapitalisation'].encode("utf8")
+            if(TotalCapitalisation ==""):
+                TotalCapitalisation=None
+            else:
+                TotalCapitalisation=float(TotalCapitalisation)
+            CapitalStock=item['CapitalStock'].encode("utf8")
+            if(CapitalStock ==""):
+                CapitalStock=None
+            else:
+                CapitalStock=float(CapitalStock)
+            NoticeDate=item['NoticeDate'].encode("utf8")
+            if(NoticeDate==""):
+                NoticeDate=None
+            else:
+                NoticeDate = NoticeDate[0:10]
+                NoticeDate=datetime.datetime.strptime(NoticeDate,"%Y-%m-%d").date()
+
+            one.SecurityCode=SecurityCode
+            one.SecurityName=SecurityName
+            one.LatestPrice=LatestPrice
+            one.PriceChangeRate=PriceChangeRate
+            one.HolderNum=HolderNum
+            one.PreviousHolderNum=PreviousHolderNum
+            one.HolderNumChange=HolderNumChange
+            one.HolderNumChangeRate=HolderNumChangeRate
+            one.RangeChangeRate=RangeChangeRate
+            one.EndDate=EndDate
+            one.PreviousEndDate=PreviousEndDate
+            one.HolderAvgCapitalisation=HolderAvgCapitalisation
+            one.HolderAvgStockQuantity=HolderAvgStockQuantity
+            one.TotalCapitalisation=TotalCapitalisation
+            one.CapitalStock=CapitalStock
+            one.NoticeDate=NoticeDate
+
+            session.add(one)
+            session.commit()
+        print 'percent:' ,count*1.0/pages,"complete!,now ",count
+        # delay 1s
+        time.sleep(1)
+
+if __name__ == "__main__":
+    # 此处需要设置charset,否则中文会乱码
+    save_json_data(user_agent_list)
+ 
